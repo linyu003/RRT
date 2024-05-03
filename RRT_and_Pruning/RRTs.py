@@ -1,129 +1,12 @@
 from __future__ import division
-from shapely.geometry import Polygon
-import yaml
-import math
-import shapely.geometry as geom
-from shapely import affinity
-import itertools
-from descartes import PolygonPatch
-from shapely.geometry import Point, Polygon, LineString, box
+from shapely.geometry import Point, LineString,Polygon
+from shapely.geometry.base import BaseGeometry
 import random
-from math import sqrt
+import math
 import numpy as np
 import time
-from matplotlib import pyplot as plt
-
-
-class Environment:
-
-    def __init__(self, yaml_file=None, bounds=None):
-        self.yaml_file = yaml_file
-        self.environment_loaded = False
-        self.obstacles = []
-        self.obstacles_map = {}
-        self.bounds = bounds
-
-        if not yaml_file is None:
-            if self.load_from_yaml_file(yaml_file):
-                if bounds is None:
-                    self.calculate_scene_dimensions()
-                self.environment_loaded = True
-
-    def bounds(self):
-        return self.bounds
-
-    def add_obstacles(self, obstacles):
-        self.obstacles = self.obstacles + obstacles
-        self.calculate_scene_dimensions()
-
-    def calculate_scene_dimensions(self):
-        """Compute scene bounds from obstacles."""
-        points = []
-        for elem in self.obstacles:
-            points = points + list(elem.boundary.coords)
-
-        mp = geom.MultiPoint(points)
-        self.bounds = mp.bounds
-
-    def load_from_yaml_file(self, yaml_file):
-        f = open(yaml_file)
-        self.data = yaml.safe_load(f)
-        f.close()
-        return self.parse_yaml_data(self.data)
-
-    def parse_yaml_data(self, data):
-        if 'environment' in data:
-            env = data['environment']
-            self.parse_yaml_obstacles(env['obstacles'])
-            return True
-        else:
-            return False
-
-    def parse_yaml_obstacles(self, obstacles):
-        self.obstacles = []
-        self.obstacles_map = {}
-        for name, description in obstacles.items():
-            if name.find("__") != -1:
-                raise Exception("Names cannot contain double underscores.")
-            if description['shape'] == 'rectangle':
-                parsed = self.parse_rectangle(name, description)
-            elif description['shape'] == 'polygon':
-                parsed = self.parse_polygon(name, description)
-            else:
-                raise Exception("not a rectangle")
-            if not parsed.is_valid:
-                raise Exception("%s is not valid!" % name)
-            self.obstacles.append(parsed)
-            self.obstacles_map[name] = parsed
-
-        self.expanded_obstacles = [obs.buffer(0.75 / 2, resolution=2) for obs in self.obstacles]
-
-    def parse_rectangle(self, name, description):
-        center = description['center']
-        center = geom.Point((center[0], center[1]))
-        length = description['length']
-        width = description['width']
-        # convert rotation to radians
-        rotation = description['rotation']  # * math.pi/180
-        # figure out the four corners.
-        corners = [(center.x - length / 2., center.y - width / 2.),
-                   (center.x + length / 2., center.y - width / 2.),
-                   (center.x + length / 2., center.y + width / 2.),
-                   (center.x - length / 2., center.y + width / 2.)]
-        # print corners
-        polygon = geom.Polygon(corners)
-        out = affinity.rotate(polygon, rotation, origin=center)
-        out.name = name
-        out.cc_length = length
-        out.cc_width = width
-        out.cc_rotation = rotation
-        return out
-
-    def parse_polygon(self, name, description):
-        _points = description['corners']
-        for points in itertools.permutations(_points):
-            polygon = geom.Polygon(points)
-            polygon.name = name
-            if polygon.is_valid:
-                return polygon
-
-    def save_to_yaml(self, yaml_file, N, start_pose, goal_region):
-        yaml_dict = {}
-        obstacles = {}
-        rand_obstacles = self.rand_obstacles_creat(N, start_pose, goal_region)
-        for i, ob in enumerate(rand_obstacles):
-            ob_dict = {}
-            ob_dict['shape'] = 'polygon'
-            ob_dict['corners'] = [list(t) for t in list(ob.boundary.coords)]
-            ob_name = "obstacle%.4d" % i
-            obstacles[ob_name] = ob_dict
-        yaml_dict['environment'] = {'obstacles': obstacles}
-
-        f = open(yaml_file, 'w')
-        f.write(yaml.dump(yaml_dict, default_flow_style=None))
-        f.close()
-
-
+from drawer import draw_results
+from environment import Environment
 class RRTPlanner():
 
     """Plans path using an algorithm from the RRT family.
@@ -132,7 +15,7 @@ class RRTPlanner():
 
     """
 
-    def initialise(self, environment, bounds, start_pose, goal_region, object_radius, steer_distance, num_iterations, resolution, runForFullIterations):
+    def initialise(self, environment: Environment, bounds, start_pose, goal_region: Polygon, object_radius, steer_distance, num_iterations, resolution, runForFullIterations):
         """Initialises the planner with information about the environment and parameters for the rrt path planers
 
         Args:
@@ -149,8 +32,8 @@ class RRTPlanner():
         Returns:
             None
         """
-        self.env = environment
-        self.obstacles = environment.obstacles
+        self.env: Environment = environment
+        self.obstacles: list[BaseGeometry] = environment.obstacles
         self.bounds = bounds
         self.minx, self.miny, self.maxx, self.maxy = bounds
         self.start_pose = start_pose
@@ -159,13 +42,13 @@ class RRTPlanner():
         self.N = num_iterations
         self.resolution = resolution
         self.steer_distance = steer_distance
-        self.V = set()
-        self.E = set()
-        self.child_to_parent_dict = dict()
+        self.V: set = set()
+        self.E: set = set()
+        self.child_to_parent_dict = dict() #key = child, value = parent
         self.runForFullIterations = runForFullIterations
         self.goal_pose = (goal_region.centroid.coords[0])
 
-    def RRT(self, environment, bounds, start_pose, goal_region, object_radius, steer_distance, num_iterations, resolution, drawResults, runForFullIterations, RRT_Flavour= "RRT"):
+    def RRT(self, environment: Environment, bounds, start_pose, goal_region: Polygon, object_radius, steer_distance, num_iterations, resolution, drawResults, runForFullIterations, RRT_Flavour= "RRT"):
         """Returns a path from the start_pose to the goal region in the current environment using the specified RRT-variant algorithm.
 
         Args:
@@ -188,23 +71,29 @@ class RRTPlanner():
         """
         self.env = environment
 
-        self.initialise(environment, bounds, start_pose, goal_region, object_radius, steer_distance, num_iterations, resolution, runForFullIterations)
+        self.initialise(environment, bounds, start_pose, goal_region, 
+            object_radius, steer_distance, num_iterations, resolution, runForFullIterations
+        )
 
+        # Define start and goal in terms of coordinates. The goal is the centroid of the goal polygon.
         x0, y0 = start_pose
         x1, y1 = goal_region.centroid.coords[0]
         start = (x0, y0)
         goal = (x1, y1)
-        elapsed_time = 0
-        path = []
+        elapsed_time=0
+        path=[]
 
+        # Handle edge case where where the start is already at the goal
         if start == goal:
             path = [start, goal]
             self.V.union([start, goal])
             self.E.union([(start, goal)])
+        # There might also be a straight path to goal, consider this case before invoking algorithm
         elif self.isEdgeCollisionFree(start, goal):
             path = [start, goal]
             self.V.union([start, goal])
             self.E.union([(start, goal)])
+        # Run the appropriate RRT algorithm according to RRT_Flavour
         else:
             if RRT_Flavour == "RRT":
                 start_time = time.time()
@@ -228,6 +117,7 @@ class RRTPlanner():
             self.E (set<(int,int),(int,int)>): A set of Edges connecting one node to another node in the tree
         """
 
+        # Initialize path and tree to be empty.
         path = []
         path_length = float('inf')
         tree_size = 0
@@ -235,33 +125,44 @@ class RRTPlanner():
         self.V.add(self.start_pose)
         goal_centroid = self.get_centroid(self.goal_region)
 
+        # Iteratively sample N random points in environment to build tree
         for i in range(self.N):
-            if(random.random() >= 1.95):
+            if(random.random()>=1.95): # Change to a value under 1 to bias search towards goal, right now this line doesn't run
                 random_point = goal_centroid
             else:
                 random_point = self.get_collision_free_random_point()
 
+            # The new point to be added to the tree is not the sampled point, but a colinear point with it and the nearest point in the tree.
+            # This keeps the branches short
             nearest_point = self.find_nearest_point(random_point)
             new_point = self.steer(nearest_point, random_point)
 
+            # If there is no obstacle between nearest point and sampled point, add the new point to the tree.
             if self.isEdgeCollisionFree(nearest_point, new_point):
                 self.V.add(new_point)
                 self.E.add((nearest_point, new_point))
                 self.setParent(nearest_point, new_point)
-
+                # If new point of the tree is at the goal region, we can find a path in the tree from start node to goal.
                 if self.isAtGoalRegion(new_point):
-                    if not self.runForFullIterations:
+                    if not self.runForFullIterations: # If not running for full iterations, terminate as soon as a path is found.
                         path, tree_size, path_size, path_length = self.find_path(self.start_pose, new_point)
                         break
-                    else:
+                    else: # If running for full iterations, we return the shortest path found.
                         tmp_path, tmp_tree_size, tmp_path_size, tmp_path_length = self.find_path(self.start_pose, new_point)
                         if tmp_path_length < path_length:
                             path_length = tmp_path_length
                             path = tmp_path
                             tree_size = tmp_tree_size
                             path_size = tmp_path_size
-        uniPruningPath = self.uniPruning(path)
-        return [path, uniPruningPath]
+        uniPruningPath=self.uniPruning(path)
+        # If no path is found, then path would be an empty list.
+        return [path,uniPruningPath]
+
+    """
+    ******************************************************************************************************************************************
+    ***************************************************** Helper Functions *******************************************************************
+    ******************************************************************************************************************************************
+    """
 
     def sample(self, c_max, c_min, x_center, C):
         if c_max < float('inf'):
@@ -300,6 +201,7 @@ class RRTPlanner():
         path, tree_size, path_size, path_length = self.find_path(self.start_pose, vertex)
         return path_length
 
+
     def linecost(self, point1, point2):
         return self.euclidian_dist(point1, point2)
 
@@ -315,8 +217,10 @@ class RRTPlanner():
         return (x, y)
 
     def get_collision_free_random_point(self):
+        # Run until a valid point is found
         while True:
             point = self.get_random_point()
+            # Pick a point, if no obstacle overlaps with a circle centered at point with some obj_radius then return said point.
             buffered_point = Point(point).buffer(self.obj_radius, self.resolution)
             if self.isPointCollisionFree(buffered_point):
                 return point
@@ -340,24 +244,20 @@ class RRTPlanner():
     def isOutOfBounds(self, point):
         if((point[0] - self.obj_radius) < self.minx):
             return True
-
         if((point[1] - self.obj_radius) < self.miny):
             return True
-
         if((point[0] + self.obj_radius) > self.maxx):
             return True
-
         if((point[1] + self.obj_radius) > self.maxy):
             return True
-
         return False
+
 
     def isEdgeCollisionFree(self, point1, point2):
         if self.isOutOfBounds(point2):
             return False
-
         line = LineString([point1, point2])
-        expanded_line = line.buffer(self.obj_radius, self.resolution)
+        expanded_line:BaseGeometry = line.buffer(self.obj_radius, self.resolution)
         for obstacle in self.obstacles:
             if expanded_line.intersects(obstacle):
                 return False
@@ -385,6 +285,7 @@ class RRTPlanner():
         return math.sqrt((point2[0] - point1[0])**2 + (point2[1] - point1[1])**2)
 
     def find_path(self, start_point, end_point):
+        # Returns a path by backtracking through the tree formed by one of the RRT algorithms starting at the end_point until reaching start_node.
         path = [end_point]
         tree_size, path_size, path_length = len(self.V), 1, 0
         current_node = end_point
@@ -405,129 +306,15 @@ class RRTPlanner():
         filtered_vals = centroid[centroid.find("(")+1:centroid.find(")")]
         filtered_x = filtered_vals[0:filtered_vals.find(" ")]
         filtered_y = filtered_vals[filtered_vals.find(" ") + 1: -1]
-        (x, y) = (float(filtered_x), float(filtered_y))
-        return (x, y)
+        (x,y) = (float(filtered_x), float(filtered_y))
+        return (x,y)
 
-    def uniPruning(self, path):
-        unidirectionalPath = [path[0]]
-        pointTem = path[0]
-        for i in range(3, len(path)):
-            if not self.isEdgeCollisionFree(pointTem, path[i]):
-                pointTem = path[i-1]
+    def uniPruning(self, path):     #Pruning function
+        unidirectionalPath=[path[0]]
+        pointTem=path[0]
+        for i in range(3,len(path)):
+            if not self.isEdgeCollisionFree(pointTem,path[i]):
+                pointTem=path[i-1]
                 unidirectionalPath.append(pointTem)
         unidirectionalPath.append(path[-1])
         return unidirectionalPath
-
-
-def plot_environment(env, bounds=None, figsize=None):
-    if bounds is None and env.bounds:
-        minx, miny, maxx, maxy = env.bounds
-    elif bounds:
-        minx, miny, maxx, maxy = bounds
-    else:
-        minx, miny, maxx, maxy = (-10,-5,10,5)
-
-    max_width, max_height = 12, 5.5
-    if figsize is None:
-        width, height = max_width, (maxy-miny)*max_width/(maxx-minx)
-        if height > 5:
-            width, height = (maxx-minx)*max_height/(maxy-miny), max_height
-        figsize = (width, height)
-    f = plt.figure(figsize=figsize)
-    ax = f.add_subplot(111)
-    for i, obs in enumerate(env.obstacles):
-        patch = PolygonPatch(obs, fc='blue', ec='blue', alpha=0.5, zorder=20)
-        ax.add_patch(patch)
-
-    plt.xlim([minx, maxx])
-    plt.ylim([miny, maxy])
-    ax.set_aspect('equal', adjustable='box')
-    return ax
-
-
-def plot_line(ax, line):
-    x, y = line.xy
-    ax.plot(x, y, color='gray', linewidth=1, solid_capstyle='butt', zorder=1)
-
-
-def plot_poly(ax, poly, color, alpha=1.0, zorder=1):
-    patch = PolygonPatch(poly, fc=color, ec="black", alpha=alpha, zorder=zorder)
-    ax.add_patch(patch)
-
-
-def draw_results(algo_name, path, V, E, env, bounds, object_radius, resolution, start_pose, goal_region, elapsed_time):
-    """
-    Plots the path from start node to goal region as well as the graph (or tree) searched with the Sampling Based Algorithms.
-
-    Args:
-        algo_name (str): The name of the algorithm used (used as title of the plot)
-        path (list<(float,float), (float,float)>): The sequence of coordinates traveled to reach goal from start node
-        V (set<(float, float)>): All nodes in the explored graph/tree
-        E (set<(float,float), (float, float)>): The set of all edges considered in the graph/tree
-        env (yaml environment): 2D yaml environment for the path planning to take place
-        bounds (int, int int int): min x, min y, max x, max y of the coordinates in the environment.
-        object_radius (float): radius of our object.
-        resolution (int): Number of segments used to approximate a quarter circle around a point.
-        start_pose(float,float): Coordinates of initial point of the path.
-        goal_region (Polygon): A polygon object representing the end goal.
-        elapsed_time (float): Time it took for the algorithm to run
-
-    Return:
-        None
-
-    Action:
-        Plots a path using the environment module.
-    """
-    originalPath, pruningPath = path
-    graph_size = len(V)
-    path_size = len(originalPath)
-    path_length1 = 0.0
-    path_length2 = 0.0
-    for i in range(len(originalPath)-1):
-        path_length1 += euclidian_dist(originalPath[i], originalPath[i+1])
-    for i in range(len(pruningPath)-1):
-        path_length2 += euclidian_dist(pruningPath[i], pruningPath[i+1])
-
-    title = algo_name + "\n" + str(graph_size) + " Nodes. " + str(len(env.obstacles)) + " Obstacles. Path Size: " + str(path_size) + "\n Path Length: " + str([path_length1,path_length2]) + "\n Runtime(s)= " + str(elapsed_time)
-
-    env_plot = plot_environment(env, bounds)
-    env_plot.set_title(title)
-    plot_poly(env_plot, goal_region, 'green')
-    buffered_start_vertex = Point(start_pose).buffer(object_radius, resolution)
-    plot_poly(env_plot, buffered_start_vertex, 'red')
-
-    for edge in E:
-        line = LineString([edge[0], edge[1]])
-        plot_line(env_plot, line)
-
-    plot_path(env_plot, originalPath, object_radius,'black')
-    plot_path(env_plot, pruningPath, object_radius,'red')
-
-
-def euclidian_dist(point1, point2):
-    return sqrt((point2[0] - point1[0])**2 + (point2[1] - point1[1])**2)
-
-
-def plot_path(env_plot, path, object_radius,colorset):
-    # Plots path by taking an enviroment plot and ploting in red the edges that form part of the path
-    line = LineString(path)
-    x, y = line.xy
-    env_plot.plot(x, y, color=colorset, linewidth=3, solid_capstyle='round', zorder=1)
-
-
-if __name__ == '__main__':
-    environment = Environment('bugtrap.yaml')
-    bounds = (-2, -3, 12, 8)
-    start_pose = (2, 2.5)
-    goal_region = Polygon([(10, 5), (10, 6), (11, 6), (11, 5)])
-    object_radius = 0.3
-    steer_distance = 0.3
-    num_iterations = 10000
-    resolution = 3
-    drawResults = True
-    runForFullIterations = False
-
-    sbpp = RRTPlanner()
-    path = sbpp.RRT(environment, bounds, start_pose, goal_region, object_radius, steer_distance, num_iterations,
-                    resolution, drawResults, runForFullIterations)
-    plt.show()

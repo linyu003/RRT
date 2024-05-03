@@ -1,5 +1,5 @@
-shapely.geometry
-yaml
-descartes
-numpy
-matplotlib
+shapely==1.8.5
+numpy==1.26.4
+PyYaml==6.0.1
+matplotlib==3.8.4
+descartes==1.1.0
