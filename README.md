@@ -1,4 +1,6 @@
 ### Notice
+Forked from https://github.com/hichenway/sampling-based-path-planning
+
 I have modified the original code, to make it work with python 3.
 
 It is tested OK on python 3.9.6.
@@ -13,6 +15,7 @@ python ./RRT_and_Pruning/main.py
 
 ```
 
+Below is the original readme:
 
 ### sampling-based-path-planning
 
