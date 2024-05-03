@@ -46,7 +46,8 @@ class RRTPlanner():
         self.E: set = set()
         self.child_to_parent_dict = dict() #key = child, value = parent
         self.runForFullIterations = runForFullIterations
-        self.goal_pose = (goal_region.centroid.coords[0])
+        # set goal_pose to the centor of goal_region
+        self.goal_pose:tuple[float,float] = (goal_region.centroid.coords[0])
 
     def RRT(self, environment: Environment, bounds, start_pose, goal_region: Polygon, object_radius, steer_distance, num_iterations, resolution, drawResults, runForFullIterations, RRT_Flavour= "RRT"):
         """Returns a path from the start_pose to the goal region in the current environment using the specified RRT-variant algorithm.
